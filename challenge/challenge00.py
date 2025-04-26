@@ -1,0 +1,1 @@
+# Placeholder for challenge00.py
