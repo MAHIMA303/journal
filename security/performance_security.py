@@ -4,7 +4,6 @@ from utils.params import N, q
 import time
 import hashlib
 import random
-from scipy.stats import ttest_ind
 
 class PerformanceSecurity:
     def __init__(self):
