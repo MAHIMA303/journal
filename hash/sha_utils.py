@@ -1,4 +1,5 @@
 # hash/sha_utils.py
+# Empty __init__.py file for hash directory
 
 import hashlib
 

@@ -22,205 +22,45 @@ class SigningError(Exception):
     """Custom exception for signing errors."""
     pass
 
-def sign_message(message: str, private_key: dict, challenge_type: str, public_key: dict = None) -> dict:
-    """Sign a message using the private key with hyperbola-based commitment."""
+def sign_message(message: str, private_key: dict, challenge_type: str, public_key: dict = None, nonce: bytes = None) -> dict:
+    """Sign a message using efficient, in-place numpy operations and minimal recomputation."""
     try:
-        # Input validation
         if not isinstance(message, str) or not isinstance(private_key, dict):
             raise SigningError("Invalid input types")
-        
-        # Extract private key components with validation
-        required_keys = ['f', 'g', 'h', 'k']
-        for key in required_keys:
-            if key not in private_key:
-                raise SigningError(f"Missing required key component: {key}")
-        
-        f = private_key['f']
-        g = private_key['g']
-        h = private_key['h']
-        k = private_key['k']
-        
-        # Validate polynomial lengths
-        if not all(isinstance(x, list) and len(x) == N for x in [f, g]):
-            raise SigningError("Invalid polynomial lengths in private key")
-        
-        # Validate shift values
-        if not all(isinstance(x, int) for x in [h, k]):
-            raise SigningError("Invalid shift values in private key")
-        
-        if challenge_type == '00':
-            # Post-quantum Fiat-Shamir c=0 protocol using lattice-based commitments:
-            # 1. Choose random polynomial r with small coefficients
-            # 2. Compute x = r² mod q using NTT for efficiency
-            # 3. For c=0, y = r
-            # 4. Verifier checks y² ≡ x mod q
-            
-            # Generate random polynomial r with coefficients in {-1, 0, 1}
-            r = [random.randint(-1, 1) for _ in range(N)]
-            
-            # Compute NTT of r
-            r_ntt = ntt(r)
-            
-            # Compute x = r² mod q using NTT multiplication
-            # First ensure r_ntt values are in proper range
-            r_ntt = [x % q for x in r_ntt]
-            
-            # Compute x_values = r² mod q
-            x_values = [(x * x) % q for x in r_ntt]
-            
-            # For c=0, y = r, so y² = r² = x
-            y_squared = x_values
-            
-            # Convert back to coefficient form for s
-            s = intt(r_ntt)
-            
-            # Ensure s has small coefficients
-            s = [x % q for x in s]
-            
-            # Create signature
-            signature = {
-                'challenge_type': challenge_type,
-                'message_hash': hashlib.sha256(message.encode()).hexdigest(),
-                's': s,  # Store the small coefficient polynomial
-                'y_squared': y_squared,
-                'x_values': x_values
-            }
-            
-        elif challenge_type == '01':
-            # Generate random values R1 and R2
-            R1 = random.randint(1, N-1)
-            R2 = random.randint(1, N-1)
-            
-            # Generate random polynomial s
-            s = [random.randint(0, q-1) for _ in range(N)]
-            
-            # Use R1 and R2 as the base values for both modular arithmetic and hyperbola
-            a = R1 % N
-            b = R2 % N
-            
-            # Ensure a and b are not zero and are coprime with N
-            while a == 0 or b == 0 or math.gcd(a, N) != 1 or math.gcd(b, N) != 1:
-                R1 = random.randint(1, N-1)
-                R2 = random.randint(1, N-1)
-                a = R1 % N
-                b = R2 % N
-            
-            # Compute x and y using modular arithmetic
-            x = (a * s[0]) % N  # Using first coefficient of s for simplicity
-            
-            # Ensure x is coprime with N by regenerating s[0] if needed
-            while x == 0 or math.gcd(x, N) != 1:
-                s[0] = random.randint(0, q-1)
-                x = (a * s[0]) % N
-            
-            y = (b * s[0]) % N
-            
-            # Store y as commitment
-            commitment_y = y
-            
-            # Create signature
-            signature = {
-                'challenge_type': challenge_type,
-                'message_hash': hashlib.sha256(message.encode()).hexdigest(),
-                's': s,
-                'x': x,
-                'h': h,
-                'k': k,
-                'a': a,
-                'b': b,
-                'R1': R1,
-                'R2': R2,
-                'commitment_y': commitment_y
-            }
-            
-        elif challenge_type == '10':
-            # Vertical hyperbola: (y-k)²/a² - (x-h)²/b² = 1
-            # Generate random values R1 and R2
-            R1 = random.randint(1, N-1)
-            R2 = random.randint(1, N-1)
-            
-            # Generate random polynomial s
-            s = [random.randint(0, q-1) for _ in range(N)]
-            
-            # Use R1 and R2 as the base values for both modular arithmetic and hyperbola
-            a = R1 % N
-            b = R2 % N
-            
-            # Ensure a and b are not zero and are coprime with N
-            while a == 0 or b == 0 or math.gcd(a, N) != 1 or math.gcd(b, N) != 1:
-                R1 = random.randint(1, N-1)
-                R2 = random.randint(1, N-1)
-                a = R1 % N
-                b = R2 % N
-            
-            # Compute x and y using modular arithmetic
-            y = (a * s[0]) % N  # Using first coefficient of s for simplicity
-            
-            # Ensure y is coprime with N by regenerating s[0] if needed
-            while y == 0 or math.gcd(y, N) != 1:
-                s[0] = random.randint(0, q-1)
-                y = (a * s[0]) % N
-            
-            x = (b * s[0]) % N
-            
-            # Store x as commitment
-            commitment_x = x
-            
-            # Create signature
-            signature = {
-                'challenge_type': challenge_type,
-                'message_hash': hashlib.sha256(message.encode()).hexdigest(),
-                's': s,
-                'x': x,
-                'y': y,
-                'h': h,
-                'k': k,
-                'a': a,
-                'b': b,
-                'R1': R1,
-                'R2': R2,
-                'commitment_x': commitment_x
-            }
-            
-        elif challenge_type == '11':
-            if public_key is None or 'h_pub' not in public_key:
-                raise SigningError("Public key with h_pub is required for challenge 11")
-                
-            # For challenge 11: y² ≡ x * v (mod n)
-            # We need to ensure that s_ntt * s_ntt ≡ s_ntt * h_pub_ntt (mod q)
-            # This means s_ntt ≡ h_pub_ntt (mod q)
-            # So we'll set s_ntt to be equal to h_pub_ntt
-            
-            # Get h_pub and compute its NTT
-            h_pub = public_key['h_pub']
-            h_pub_ntt = ntt(h_pub)
-            
-            # Set s_ntt to be equal to h_pub_ntt
-            s_ntt = h_pub_ntt
-            
-            # Compute y² and xv
-            y_squared = [(x * x) % q for x in s_ntt]
-            xv = [(s_ntt[i] * h_pub_ntt[i]) % q for i in range(N)]
-            
-            # Convert s_ntt back to s
-            s = intt(s_ntt)
-            
-            # Create signature
-            signature = {
-                'challenge_type': challenge_type,
-                'message_hash': hashlib.sha256(message.encode()).hexdigest(),
-                's': s,
-                'y_squared': y_squared,
-                'xv': xv
-            }
-            
-        else:
-            raise SigningError(f"Invalid challenge type: {challenge_type}")
-        
+        n = private_key['params']['q']
+        # Use numpy arrays for all polynomials
+        f = np.array(private_key['f'], dtype=np.int64)
+        g = np.array(private_key['g'], dtype=np.int64)
+        # Use in-place operations for blinding (if needed)
+        f += np.random.randint(-3, 4, size=f.shape)
+        g += np.random.randint(-3, 4, size=g.shape)
+        # Only compute what is needed for the challenge
+        public_params = {'n': n}
+        if public_key and 'v' in public_key:
+            public_params['v'] = public_key['v']
+        secret_data = {}  # Fill as needed
+        # Prepare all required arguments for create_commitment
+        from utils.params import N, q
+        # Generate protocol-accurate commitment values
+        from challenge.four_challenges import generate_commitment_for_challenge
+        commitment_params = generate_commitment_for_challenge(challenge_type, public_params)
+        # x, y, randomness as arrays of length N
+        x = np.full(N, commitment_params['x'])
+        y = np.full(N, commitment_params['y'])
+        randomness = np.full(N, commitment_params['r'])
+        a = commitment_params['a']
+        b = commitment_params['b']
+        private_key_point = (commitment_params['h'], commitment_params['k'])
+        public_key_point = (commitment_params['v'], commitment_params['k'])  # Adjust as needed for your protocol
+        commitment = create_commitment(x, y, randomness, a, b, private_key_point, public_key_point)
+        response = handle_challenge(challenge_type, commitment, secret_data, public_params)
+        signature = {
+            'challenge_type': challenge_type,
+            'message_hash': hashlib.sha256(message.encode()).hexdigest(),
+            'commitment': commitment,
+            'response': response
+        }
         return signature
-        
-    except SigningError as e:
-        raise  # Re-raise SigningError with its message
     except Exception as e:
         raise SigningError(f"Signing failed: {str(e)}")
 

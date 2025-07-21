@@ -3,6 +3,13 @@
 import numpy as np
 from commitment.lattice_commit import create_lattice_commitment, verify_lattice_commitment
 from utils.params import N
+from numba import njit
+from concurrent.futures import ThreadPoolExecutor
+
+@njit
+def ntt_numba(a, root_of_unity, q, N):
+    # ... your NTT code here, but with all math in this function ...
+    return a
 
 def test_verification_process():
     # Test parameters

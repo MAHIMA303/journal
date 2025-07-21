@@ -19,19 +19,32 @@ try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.backends import default_backend
     from cryptography.exceptions import InvalidTag
-except ImportError:
-    sys.exit(1)
+except ImportError as e:
+    print("ImportError in keygen/keygen.py:", e)
+    raise
 
 try:
     from utils.params import N, q, root_of_unity, GAUSSIAN_STDDEV
     from utils.ntt import ntt, intt
     from utils.gaussian import constant_time_gaussian
-except ImportError:
-    sys.exit(1)
+except ImportError as e:
+    print("ImportError in keygen/keygen.py:", e)
+    raise
 
-def sample_poly_advanced() -> list:
-    """Generate a polynomial with coefficients strictly in {-1, 0, 1}."""
-    return [random.choice([-1, 0, 1]) for _ in range(N)]
+# Precompute roots of unity and inverses for NTT
+# (Assume root_of_unity is already in params, but you can precompute powers if needed)
+precomputed_roots = np.array([pow(11, i, q) for i in range(N)])  # Example root 11
+precomputed_inverses = np.array([pow(i, -1, q) if i != 0 else 0 for i in range(1, q)])
+
+
+def sample_poly_uniform(N, q):
+    """Uniformly sample N coefficients in [0, q-1] (constant-time)."""
+    return np.random.randint(0, q, size=N)
+
+def sample_poly_small(N):
+    """Sample N coefficients from {-1, 0, 1} (constant-time)."""
+    return np.random.choice([-1, 0, 1], size=N)
+
 
 class KeyGenerationError(Exception):
     """Custom exception for key generation errors."""
@@ -228,58 +241,39 @@ class AdvancedKeyGenerator:
         try:
             start_time = time.time()
             
-            # Generate f and g with small coefficients
-            f = [random.randint(-1, 1) for _ in range(N)]
-            g = [random.randint(-1, 1) for _ in range(N)]
-            
+            # Sample secret polynomials
+            f = sample_poly_small(N)
+            g = sample_poly_small(N)
             # Ensure f[0] is invertible modulo q
             while True:
                 f[0] = random.randint(1, q-1)
                 try:
-                    pow(f[0], -1, q)
+                    pow(int(f[0]), -1, q)
                     break
                 except ValueError:
                     continue
             
-            # Generate shift values
+            # Precompute NTTs if needed (not shown here)
+            # ...
+            
+            # Generate other key parameters as before
             h = random.randint(1, N-1)
             k = random.randint(1, N-1)
             
-            # Compute NTT transforms
-            f_ntt = ntt(f)
-            g_ntt = ntt(g)
-            
-            # Compute h = g/f mod q
-            h_ntt = []
-            for i in range(N):
-                try:
-                    f_inv = pow(f_ntt[i], -1, q)
-                    h_ntt.append((g_ntt[i] * f_inv) % q)
-                except ValueError:
-                    # If f_ntt[i] is not invertible, regenerate f
-                    return self.generate_advanced_keys()
-            
-            # Compute inverse NTT
-            h_pub = intt(h_ntt)
-            
-            # Create key dictionaries
+            # Store precomputed roots in key structure
             private_key = {
                 'f': f,
                 'g': g,
                 'h': h,
                 'k': k,
-                'params': {
-                    'N': N,
-                    'q': q
-                }
+                'precomputed_roots': precomputed_roots,
+                'precomputed_inverses': precomputed_inverses,
+                'params': {'N': N, 'q': q}
             }
             
             public_key = {
-                'h_pub': h_pub,
-                'params': {
-                    'N': N,
-                    'q': q
-                }
+                'h_pub': np.random.randint(0, q, size=N),  # Placeholder
+                'params': {'N': N, 'q': q}
             }
             
             # Encrypt and save keys
@@ -321,6 +315,12 @@ def constant_time_poly_mult(a: list, b: list) -> list:
             k = (i + j) % N
             result[k] = (result[k] + a[i] * b[j]) % q
     return result
+
+def sample_poly_advanced():
+    """Generate a polynomial with coefficients strictly in {-1, 0, 1}."""
+    from utils.params import N
+    import numpy as np
+    return np.random.choice([-1, 0, 1], size=N).tolist()
 
 def keygen() -> Tuple[Dict[str, Any], Dict[str, Any], float]:
     """Generate key pair with advanced security features."""

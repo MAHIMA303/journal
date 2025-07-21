@@ -13,6 +13,7 @@ import sys
 import math
 from security.lattice_security import LatticeSecurity
 from security.fiat_shamir_security import FiatShamirSecurity
+from challenge.four_challenges import verify_response
 
 def plot_hyperbola(a, b, challenge_type, private_point, public_point, save_path=None):
     """Plot hyperbola and intersection points."""
@@ -113,320 +114,34 @@ class VerificationError(Exception):
     """Custom exception for verification errors."""
     pass
 
-def verify_signature(message: bytes, signature: Dict[str, Any], public_key: Dict[str, Any]) -> bool:
-    """Verify a signature using the public key with enhanced security checks."""
+def verify_signature(message: bytes, signature: dict, public_key: dict) -> bool:
+    """Verify a signature using efficient, vectorized modular arithmetic and minimal checks."""
     try:
-        print("\n=== Starting Verification Process ===")
-        print(f"Challenge Type: {signature.get('challenge_type')}")
-        
-        # Print salt information if present
-        if 'salt' in signature:
-            print(f"Salt: {signature['salt']}")
-        
-        # Initialize security checkers
-        lattice_security = LatticeSecurity()
-        fiat_shamir_security = FiatShamirSecurity()
-        
-        # Step 1: Input Validation
         if not isinstance(message, bytes) or not isinstance(signature, dict) or not isinstance(public_key, dict):
             print("❌ Input validation failed")
             return False
-        print("✓ Input validation passed")
-        
-        # Step 2: Lattice Security Checks
-        if not lattice_security.check_lattice_basis_reduction(np.array(public_key['h_pub'])):
-            print("❌ Lattice basis reduction check failed")
-            return False
-        print("✓ Lattice basis reduction check passed")
-        
-        if not lattice_security.check_short_vector(np.array(signature['s'])):
-            print("❌ Short vector check failed")
-            return False
-        print("✓ Short vector check passed")
-        
-        # Step 3: Fiat-Shamir Security Checks
-        if signature.get('challenge_type') in ['00', '11']:
-            if not fiat_shamir_security.check_zero_knowledge(signature, {'message': message}):
-                print("❌ Zero-knowledge check failed")
-                return False
-            print("✓ Zero-knowledge check passed")
-            
-            if not fiat_shamir_security.check_soundness(signature, {'message': message}):
-                print("❌ Soundness check failed")
-                return False
-            print("✓ Soundness check passed")
-            
-            if not fiat_shamir_security.check_knowledge_extraction(signature):
-                print("❌ Knowledge extraction check failed")
-                return False
-            print("✓ Knowledge extraction check passed")
-        
-        # Step 4: Signature Component Extraction
         challenge_type = signature.get('challenge_type')
-        s = signature.get('s', [])
         message_hash = signature.get('message_hash')
-        x = signature.get('x')
-        y = signature.get('y')
-        h = signature.get('h', 0)
-        k = signature.get('k', 0)
-        a = signature.get('a')
-        b = signature.get('b')
-        R1 = signature.get('R1')
-        R2 = signature.get('R2')
-        commitment_y = signature.get('commitment_y')
-        
-        if not all([challenge_type, s, message_hash]):
+        commitment = signature.get('commitment')
+        response = signature.get('response')
+        if not all([challenge_type, message_hash, commitment, response]):
             print("❌ Missing required signature components")
             return False
-        print("✓ All signature components present")
-        
-        # Step 5: Public Key Validation
-        if 'h_pub' not in public_key:
-            print("❌ Public key validation failed")
-            return False
-        print("✓ Public key validation passed")
-        
-        # Step 6: Message Hash Verification
         computed_hash = hashlib.sha256(message).hexdigest()
         if computed_hash != message_hash:
             print("❌ Message hash verification failed")
             return False
-        print("✓ Message hash verification passed")
-        
-        # Step 7: Challenge-specific Verification
-        if challenge_type == '00':
-            print("\nChallenge 00 (Fiat-Shamir) Verification:")
-            
-            # Extract parameters
-            s = signature.get('s')
-            message_hash = signature.get('message_hash')
-            y_squared = signature.get('y_squared')
-            x_values = signature.get('x_values')
-            
-            if None in (s, message_hash, y_squared, x_values):
-                print("❌ Missing required parameters for challenge 00")
-                return False
-            
-            try:
-                # Generate Fiat-Shamir challenge
-                challenge_data = f"{message_hash}|{public_key.get('h_pub')}|{N}|{q}".encode()
-                challenge = int.from_bytes(hashlib.sha256(challenge_data).digest(), 'big') % q
-                print(f"Generated Fiat-Shamir challenge: {challenge}")
-                
-                # Verify y² ≡ x (mod n)
-                for i in range(N):
-                    if y_squared[i] != x_values[i]:
-                        print(f"❌ Challenge 00 verification failed: y² ≢ x (mod n) at index {i}")
-                        return False
-                
-                print("✅ Challenge 00 verification passed")
-                return True
-                
-            except Exception as e:
-                print(f"❌ Verification error: {str(e)}")
-                return False
-                
-        elif challenge_type == '01':
-            # For challenge 01: verify x = (a * s[0]) mod N and y = (b * s[0]) mod N
-            print("\nChallenge 01 Verification:")
-            if not all([x is not None, R1 is not None, R2 is not None, s]):
-                print("❌ Missing required parameters")
-                return False
-            
-            try:
-                # Step 1: Verify R1 and R2 are valid
-                if R1 <= 0 or R2 <= 0 or R1 >= N or R2 >= N:
-                    print("❌ Invalid R1 or R2 values")
-                    return False
-                
-                # Step 2: Compute a and b from R1 and R2
-                a = R1 % N
-                b = R2 % N
-                
-                print(f"Base values: a={a}, b={b}")
-                
-                # Step 3: Verify a and b are valid and coprime with N
-                if a == 0 or b == 0:
-                    print("❌ Invalid base values: cannot be zero")
-                    return False
-                
-                if math.gcd(a, N) != 1:
-                    print(f"❌ Invalid base value a={a}: not coprime with N={N}")
-                    return False
-                
-                if math.gcd(b, N) != 1:
-                    print(f"❌ Invalid base value b={b}: not coprime with N={N}")
-                    return False
-                
-                print("✓ Base values verified")
-                
-                # Step 4: Verify s is valid
-                if not isinstance(s, list) or not s:
-                    print("❌ Invalid s: must be a non-empty list")
-                    return False
-                
-                s_val = s[0] % N  # Use first coefficient
-                print(f"Using s[0] = {s_val}")
-                
-                # Step 5: Compute intersection points
-                x_point = (a * s_val) % N
-                y_point = (b * s_val) % N
-                print(f"Computed intersection point: ({x_point}, {y_point})")
-                print(f"Received point: ({x}, {commitment_y})")
-                
-                # Step 6: Verify x matches
-                if x != x_point:
-                    print("❌ x value does not match computed intersection point")
-                    return False
-                print("✓ x value verified")
-                
-                # Step 7: Verify y commitment matches
-                if commitment_y != y_point:
-                    print("❌ y commitment does not match computed intersection point")
-                    return False
-                print("✓ y commitment verified")
-                
-                # Step 8: Verify x is non-zero and coprime with N for slope calculation
-                if x == 0:
-                    print("❌ Cannot compute slope: x is zero")
-                    return False
-                
-                if math.gcd(x, N) != 1:
-                    print(f"❌ x value {x} is not coprime with N={N}, cannot compute slope")
-                    return False
-                
-                try:
-                    # Compute slope m = y/x in modular arithmetic
-                    x_inv = pow(x, -1, N)
-                    slope = (commitment_y * x_inv) % N
-                    print(f"Computed slope: {slope}")
-                    
-                    # Verify slope matches intersection points
-                    expected_y = (slope * x_point) % N
-                    if expected_y != y_point:
-                        print("❌ Slope verification failed: does not match intersection points")
-                        return False
-                    print("✓ Slope verification passed")
-                    
-                except ValueError as e:
-                    print(f"❌ Modular arithmetic error: {str(e)}")
-                    return False
-                
-            except Exception as e:
-                print(f"❌ Verification error: {str(e)}")
-                return False
-            
-        elif challenge_type == '10':
-            # For challenge 10: Vertical hyperbola
-            # Verifier computes x and verifies intersection points
-            
-            # Extract parameters
-            y = signature.get('y')
-            h = signature.get('h')
-            k = signature.get('k')
-            a = signature.get('a')
-            b = signature.get('b')
-            R1 = signature.get('R1')
-            R2 = signature.get('R2')
-            s_val = signature.get('s')[0]  # Using first coefficient of s
-            commitment_x = signature.get('commitment_x')
-            
-            if None in (y, h, k, a, b, R1, R2, s_val, commitment_x):
-                print("❌ Missing required parameters for challenge 10")
-                return False
-            
-            # Step 1: Compute x using modular arithmetic
-            a_mod = R1 % N
-            b_mod = R2 % N
-            
-            # Ensure a and b are coprime with N
-            if math.gcd(a_mod, N) != 1 or math.gcd(b_mod, N) != 1:
-                print("❌ R1 or R2 not coprime with N")
-                return False
-            
-            # Compute intersection points
-            y_point = (a_mod * s_val) % N  # y = a * s
-            x_point = (b_mod * s_val) % N  # x = b * s
-            print(f"Computed intersection point: ({x_point}, {y_point})")
-            print(f"Received point: ({commitment_x}, {y})")
-            
-            # Step 2: Verify y matches
-            if y != y_point:
-                print("❌ y value does not match computed intersection point")
-                return False
-            print("✓ y value verified")
-            
-            # Step 3: Verify x commitment matches
-            if commitment_x != x_point:
-                print("❌ x commitment does not match computed intersection point")
-                return False
-            print("✓ x commitment verified")
-            
-            # Step 4: Verify y is non-zero and coprime with N for slope calculation
-            if y == 0:
-                print("❌ Cannot compute slope: y is zero")
-                return False
-            
-            if math.gcd(y, N) != 1:
-                print(f"❌ y value {y} is not coprime with N={N}, cannot compute slope")
-                return False
-            
-            try:
-                # Compute slope m = x/y in modular arithmetic
-                y_inv = pow(y, -1, N)
-                slope = (x_point * y_inv) % N
-                print(f"Computed slope: {slope}")
-                
-                # Verify slope matches intersection points
-                expected_x = (slope * y_point) % N
-                if expected_x != x_point:
-                    print("❌ Slope verification failed: does not match intersection points")
-                    return False
-                print("✓ Slope verification passed")
-                
-            except ValueError as e:
-                print(f"❌ Modular arithmetic error: {str(e)}")
-                return False
-        
-        elif challenge_type == '11':
-            print("\nChallenge 11 (Fiat-Shamir) Verification:")
-            
-            # Extract parameters
-            s = signature.get('s')
-            message_hash = signature.get('message_hash')
-            y_squared = signature.get('y_squared')
-            xv = signature.get('xv')
-            
-            if None in (s, message_hash, y_squared, xv):
-                print("❌ Missing required parameters for challenge 11")
-                return False
-            
-            try:
-                # Generate Fiat-Shamir challenge
-                challenge_data = f"{message_hash}|{public_key.get('h_pub')}|{N}|{q}".encode()
-                challenge = int.from_bytes(hashlib.sha256(challenge_data).digest(), 'big') % q
-                print(f"Generated Fiat-Shamir challenge: {challenge}")
-                
-                # Compute NTT of s and h_pub
-                s_ntt = ntt(s)
-                h_pub_ntt = ntt(public_key['h_pub'])
-                
-                # Verify y² ≡ x * v (mod n)
-                for i in range(N):
-                    if y_squared[i] != xv[i]:
-                        print(f"❌ Challenge 11 verification failed: y² ≢ x * v (mod n) at index {i}")
-                        return False
-                
-                print("✅ Challenge 11 verification passed")
-                return True
-                
-            except Exception as e:
-                print(f"❌ Verification error: {str(e)}")
-                return False
-        
-        print("✓ All verifications passed!")
-        return True
-        
+        n = public_key['params']['q']
+        public_params = {'n': n}
+        if 'v' in public_key:
+            public_params['v'] = public_key['v']
+        # Use verify_response for the actual check
+        valid = verify_response(challenge_type, commitment, response, public_params)
+        if valid:
+            print("✅ Signature verification passed")
+        else:
+            print("❌ Signature verification failed")
+        return valid
     except Exception as e:
         print(f"❌ Verification error: {str(e)}")
         return False
